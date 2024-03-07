@@ -40,7 +40,11 @@ function __pwRender(value) {
     if (isJsxComponent(v)) {
       const component = v;
       const props = component.props ? __pwRender(component.props) : {};
-      return { result: __pwReact.createElement(/** @type { any } */ (component.type), { ...props, children: undefined }, props.children) };
+      const { children, ...propsWithoutChildren } = props;
+      const createElementArguments = [propsWithoutChildren];
+      if (children)
+        createElementArguments.push(children);
+      return { result: __pwReact.createElement(component.type, ...createElementArguments) };
     }
   });
 }

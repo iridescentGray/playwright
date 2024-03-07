@@ -26,7 +26,6 @@ import type { ContextReuseMode } from './common/config';
 import type { ClientInstrumentation, ClientInstrumentationListener } from '../../playwright-core/src/client/clientInstrumentation';
 import { currentTestInfo } from './common/globals';
 export { expect } from './matchers/expect';
-export { store as _store } from './store';
 export const _baseTest: TestType<{}, {}> = rootTestType.test;
 
 addInternalStackPrefix(path.dirname(require.resolve('../package.json')));
@@ -45,14 +44,16 @@ if ((process as any)['__pw_initiator__']) {
 
 type TestFixtures = PlaywrightTestArgs & PlaywrightTestOptions & {
   _combinedContextOptions: BrowserContextOptions,
-  _contextReuseMode: ContextReuseMode,
-  _reuseContext: boolean,
   _setupContextOptions: void;
   _setupArtifacts: void;
   _contextFactory: (options?: BrowserContextOptions) => Promise<BrowserContext>;
 };
+
 type WorkerFixtures = PlaywrightWorkerArgs & PlaywrightWorkerOptions & {
   _browserOptions: LaunchOptions;
+  _optionContextReuseMode: ContextReuseMode,
+  _optionConnectOptions: PlaywrightWorkerOptions['connectOptions'],
+  _reuseContext: boolean,
 };
 
 const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
@@ -64,8 +65,8 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
   headless: [({ launchOptions }, use) => use(launchOptions.headless ?? true), { scope: 'worker', option: true }],
   channel: [({ launchOptions }, use) => use(launchOptions.channel), { scope: 'worker', option: true }],
   launchOptions: [{}, { scope: 'worker', option: true }],
-  connectOptions: [async ({}, use) => {
-    await use(connectOptionsFromEnv());
+  connectOptions: [async ({ _optionConnectOptions }, use) => {
+    await use(connectOptionsFromEnv() || _optionConnectOptions);
   }, { scope: 'worker', option: true }],
   screenshot: ['off', { scope: 'worker', option: true }],
   video: ['off', { scope: 'worker', option: true }],
@@ -89,7 +90,7 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
       (browserType as any)._defaultLaunchOptions = undefined;
   }, { scope: 'worker', auto: true }],
 
-  browser: [async ({ playwright, browserName, _browserOptions, connectOptions }, use, testInfo) => {
+  browser: [async ({ playwright, browserName, _browserOptions, connectOptions, _reuseContext }, use, testInfo) => {
     if (!['chromium', 'firefox', 'webkit'].includes(browserName))
       throw new Error(`Unexpected browserName "${browserName}", must be one of "chromium", "firefox" or "webkit"`);
 
@@ -98,7 +99,7 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
         ...connectOptions,
         exposeNetwork: connectOptions.exposeNetwork ?? (connectOptions as any)._exposeNetwork,
         headers: {
-          ...(process.env.PW_TEST_REUSE_CONTEXT ? { 'x-playwright-reuse-context': '1' } : {}),
+          ...(_reuseContext ? { 'x-playwright-reuse-context': '1' } : {}),
           // HTTP headers are ASCII only (not UTF-8).
           'x-playwright-launch-options': jsonStringifyForceASCII(_browserOptions),
           ...connectOptions.headers,
@@ -257,7 +258,6 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
           apiName,
           params,
           wallTime,
-          laxParent: true,
         });
         userData.userObject = step;
       },
@@ -350,12 +350,16 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
 
   }, { scope: 'test',  _title: 'context' } as any],
 
-  _contextReuseMode: process.env.PW_TEST_REUSE_CONTEXT === 'when-possible' ? 'when-possible' : (process.env.PW_TEST_REUSE_CONTEXT ? 'force' : 'none'),
+  _optionContextReuseMode: ['none', { scope: 'worker', option: true }],
+  _optionConnectOptions: [undefined, { scope: 'worker', option: true }],
 
-  _reuseContext: [async ({ video, _contextReuseMode }, use, testInfo) => {
-    const reuse = _contextReuseMode === 'force' || (_contextReuseMode === 'when-possible' && !shouldCaptureVideo(normalizeVideoMode(video), testInfo));
+  _reuseContext: [async ({ video, _optionContextReuseMode }, use) => {
+    let mode = _optionContextReuseMode;
+    if (process.env.PW_TEST_REUSE_CONTEXT)
+      mode = process.env.PW_TEST_REUSE_CONTEXT === 'when-possible' ? 'when-possible' : (process.env.PW_TEST_REUSE_CONTEXT ? 'force' : 'none');
+    const reuse = mode === 'force' || (mode === 'when-possible' && normalizeVideoMode(video) === 'off');
     await use(reuse);
-  }, { scope: 'test',  _title: 'context' } as any],
+  }, { scope: 'worker',  _title: 'context' } as any],
 
   context: async ({ playwright, browser, _reuseContext, _contextFactory }, use, testInfo) => {
     attachConnectedHeaderIfNeeded(testInfo, browser);

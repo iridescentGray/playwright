@@ -20,11 +20,11 @@ import { MaxTime, captureRawStack, monotonicTime, zones, sanitizeForFilePath, st
 import type { TestInfoError, TestInfo, TestStatus, FullProject, FullConfig } from '../../types/test';
 import type { AttachmentPayload, StepBeginPayload, StepEndPayload, WorkerInitParams } from '../common/ipc';
 import type { TestCase } from '../common/test';
-import { TimeoutManager } from './timeoutManager';
-import type { RunnableType, TimeSlot } from './timeoutManager';
+import { TimeoutManager, TimeoutManagerError } from './timeoutManager';
+import type { RunnableDescription, RunnableType, TimeSlot } from './timeoutManager';
 import type { Annotation, FullConfigInternal, FullProjectInternal } from '../common/config';
 import type { Location } from '../../types/testReporter';
-import { filteredStackTrace, getContainedPath, normalizeAndSaveAttachment, serializeError, trimLongString } from '../util';
+import { debugTest, filteredStackTrace, formatLocation, getContainedPath, normalizeAndSaveAttachment, serializeError, trimLongString } from '../util';
 import { TestTracing } from './testTracing';
 import type { Attachment } from './testTracing';
 import type { StackFrame } from '@protocol/channels';
@@ -33,12 +33,11 @@ export interface TestStepInternal {
   complete(result: { error?: Error, attachments?: Attachment[] }): void;
   stepId: string;
   title: string;
-  category: string;
+  category: 'hook' | 'fixture' | 'test.step' | string;
   wallTime: number;
   location?: Location;
   boxedStack?: StackFrame[];
   steps: TestStepInternal[];
-  laxParent?: boolean;
   endWallTime?: number;
   apiName?: string;
   params?: Record<string, any>;
@@ -46,13 +45,24 @@ export interface TestStepInternal {
   infectParentStepsWithError?: boolean;
   box?: boolean;
   isSoft?: boolean;
+  isStage?: boolean;
 }
+
+export type TestStage = {
+  title: string;
+  location?: Location;
+  stepCategory?: 'hook' | 'fixture';
+  runnableType?: RunnableType;
+  runnableSlot?: TimeSlot;
+  canTimeout?: boolean;
+  allowSkip?: boolean;
+  step?: TestStepInternal;
+};
 
 export class TestInfoImpl implements TestInfo {
   private _onStepBegin: (payload: StepBeginPayload) => void;
   private _onStepEnd: (payload: StepEndPayload) => void;
   private _onAttach: (payload: AttachmentPayload) => void;
-  readonly _test: TestCase;
   readonly _timeoutManager: TimeoutManager;
   readonly _startTime: number;
   readonly _startWallTime: number;
@@ -62,12 +72,13 @@ export class TestInfoImpl implements TestInfo {
   _didTimeout = false;
   _wasInterrupted = false;
   _lastStepId = 0;
+  private readonly _requireFile: string;
   readonly _projectInternal: FullProjectInternal;
   readonly _configInternal: FullConfigInternal;
-  readonly _steps: TestStepInternal[] = [];
-  _beforeHooksStep: TestStepInternal | undefined;
-  _afterHooksStep: TestStepInternal | undefined;
+  private readonly _steps: TestStepInternal[] = [];
   _onDidFinishTestFunction: (() => Promise<void>) | undefined;
+  private readonly _stages: TestStage[] = [];
+  _hasNonRetriableError = false;
 
   // ------------ TestInfo fields ------------
   readonly testId: string;
@@ -81,6 +92,7 @@ export class TestInfoImpl implements TestInfo {
   readonly titlePath: string[];
   readonly file: string;
   readonly line: number;
+  readonly tags: string[];
   readonly column: number;
   readonly fn: Function;
   expectedStatus: TestStatus;
@@ -129,19 +141,19 @@ export class TestInfoImpl implements TestInfo {
     configInternal: FullConfigInternal,
     projectInternal: FullProjectInternal,
     workerParams: WorkerInitParams,
-    test: TestCase,
+    test: TestCase | undefined,
     retry: number,
     onStepBegin: (payload: StepBeginPayload) => void,
     onStepEnd: (payload: StepEndPayload) => void,
     onAttach: (payload: AttachmentPayload) => void,
   ) {
-    this._test = test;
-    this.testId = test.id;
+    this.testId = test?.id ?? '';
     this._onStepBegin = onStepBegin;
     this._onStepEnd = onStepEnd;
     this._onAttach = onAttach;
     this._startTime = monotonicTime();
     this._startWallTime = Date.now();
+    this._requireFile = test?._requireFile ?? '';
 
     this.repeatEachIndex = workerParams.repeatEachIndex;
     this.retry = retry;
@@ -151,20 +163,21 @@ export class TestInfoImpl implements TestInfo {
     this.project = projectInternal.project;
     this._configInternal = configInternal;
     this.config = configInternal.config;
-    this.title = test.title;
-    this.titlePath = test.titlePath();
-    this.file = test.location.file;
-    this.line = test.location.line;
-    this.column = test.location.column;
-    this.fn = test.fn;
-    this.expectedStatus = test.expectedStatus;
+    this.title = test?.title ?? '';
+    this.titlePath = test?.titlePath() ?? [];
+    this.file = test?.location.file ?? '';
+    this.line = test?.location.line ?? 0;
+    this.column = test?.location.column ?? 0;
+    this.tags = test?.tags ?? [];
+    this.fn = test?.fn ?? (() => {});
+    this.expectedStatus = test?.expectedStatus ?? 'skipped';
 
     this._timeoutManager = new TimeoutManager(this.project.timeout);
 
     this.outputDir = (() => {
-      const relativeTestFilePath = path.relative(this.project.testDir, test._requireFile.replace(/\.(spec|test)\.(js|ts|mjs)$/, ''));
+      const relativeTestFilePath = path.relative(this.project.testDir, this._requireFile.replace(/\.(spec|test)\.(js|ts|mjs)$/, ''));
       const sanitizedRelativePath = relativeTestFilePath.replace(process.platform === 'win32' ? new RegExp('\\\\', 'g') : new RegExp('/', 'g'), '-');
-      const fullTitleWithoutSpec = test.titlePath().slice(1).join(' ');
+      const fullTitleWithoutSpec = this.titlePath.slice(1).join(' ');
 
       let testOutputDir = trimLongString(sanitizedRelativePath + '-' + sanitizeForFilePath(fullTitleWithoutSpec));
       if (projectInternal.id)
@@ -177,7 +190,7 @@ export class TestInfoImpl implements TestInfo {
     })();
 
     this.snapshotDir = (() => {
-      const relativeTestFilePath = path.relative(this.project.testDir, test._requireFile);
+      const relativeTestFilePath = path.relative(this.project.testDir, this._requireFile);
       return path.join(this.project.snapshotDir, relativeTestFilePath + '-snapshots');
     })();
 
@@ -218,53 +231,43 @@ export class TestInfoImpl implements TestInfo {
     }
   }
 
-  async _runWithTimeout(cb: () => Promise<any>): Promise<void> {
-    const timeoutError = await this._timeoutManager.runWithTimeout(cb);
-    // When interrupting, we arrive here with a timeoutError, but we should not
-    // consider it a timeout.
-    if (!this._wasInterrupted && timeoutError && !this._didTimeout) {
-      this._didTimeout = true;
-      this.errors.push(timeoutError);
-      this._tracing.appendForError(timeoutError);
-      // Do not overwrite existing failure upon hook/teardown timeout.
-      if (this.status === 'passed' || this.status === 'skipped')
-        this.status = 'timedOut';
-    }
-    this.duration = this._timeoutManager.defaultSlotTimings().elapsed | 0;
+  private _findLastNonFinishedStep(filter: (step: TestStepInternal) => boolean) {
+    let result: TestStepInternal | undefined;
+    const visit = (step: TestStepInternal) => {
+      if (!step.endWallTime && filter(step))
+        result = step;
+      step.steps.forEach(visit);
+    };
+    this._steps.forEach(visit);
+    return result;
   }
 
-  async _runAndFailOnError(fn: () => Promise<void>, skips?: 'allowSkips'): Promise<Error | undefined> {
-    try {
-      await fn();
-    } catch (error) {
-      if (skips === 'allowSkips' && error instanceof SkipError) {
-        if (this.status === 'passed')
-          this.status = 'skipped';
-      } else {
-        this._failWithError(error, true /* isHardError */);
-        return error;
-      }
+  private _findLastStageStep() {
+    for (let i = this._stages.length - 1; i >= 0; i--) {
+      if (this._stages[i].step)
+        return this._stages[i].step;
     }
   }
 
-  _addStep(data: Omit<TestStepInternal, 'complete' | 'stepId' | 'steps'>, parentStep?: TestStepInternal): TestStepInternal {
+  _addStep(data: Omit<TestStepInternal, 'complete' | 'stepId' | 'steps'>): TestStepInternal {
     const stepId = `${data.category}@${++this._lastStepId}`;
     const rawStack = captureRawStack();
-    if (!parentStep)
-      parentStep = zones.zoneData<TestStepInternal>('stepZone', rawStack!) || undefined;
 
-    // For out-of-stack calls, locate the enclosing step.
-    let isLaxParent = false;
-    if (!parentStep && data.laxParent) {
-      const visit = (step: TestStepInternal) => {
-        // Do not nest chains of route.continue.
-        const shouldNest = step.title !== data.title;
-        if (!step.endWallTime && shouldNest)
-          parentStep = step;
-        step.steps.forEach(visit);
-      };
-      this._steps.forEach(visit);
-      isLaxParent = !!parentStep;
+    let parentStep: TestStepInternal | undefined;
+    if (data.isStage) {
+      // Predefined stages form a fixed hierarchy - use the current one as parent.
+      parentStep = this._findLastStageStep();
+    } else {
+      parentStep = zones.zoneData<TestStepInternal>('stepZone', rawStack!) || undefined;
+      if (!parentStep && data.category !== 'test.step') {
+        // API steps (but not test.step calls) can be nested by time, instead of by stack.
+        // However, do not nest chains of route.continue by checking the title.
+        parentStep = this._findLastNonFinishedStep(step => step.title !== data.title);
+      }
+      if (!parentStep) {
+        // If no parent step on stack, assume the current stage as parent.
+        parentStep = this._findLastStageStep();
+      }
     }
 
     const filteredStack = filteredStackTrace(rawStack);
@@ -278,7 +281,6 @@ export class TestInfoImpl implements TestInfo {
     const step: TestStepInternal = {
       stepId,
       ...data,
-      laxParent: isLaxParent,
       steps: [],
       complete: result => {
         if (step.endWallTime)
@@ -308,7 +310,7 @@ export class TestInfoImpl implements TestInfo {
         }
 
         const payload: StepEndPayload = {
-          testId: this._test.id,
+          testId: this.testId,
           stepId,
           wallTime: step.endWallTime,
           error: step.error,
@@ -318,13 +320,13 @@ export class TestInfoImpl implements TestInfo {
         this._tracing.appendAfterActionForStep(stepId, errorForTrace, result.attachments);
 
         if (step.isSoft && result.error)
-          this._failWithError(result.error, false /* isHardError */);
+          this._failWithError(result.error, false /* isHardError */, true /* retriable */);
       }
     };
     const parentStepList = parentStep ? parentStep.steps : this._steps;
     parentStepList.push(step);
     const payload: StepBeginPayload = {
-      testId: this._test.id,
+      testId: this.testId,
       stepId,
       parentStepId: parentStep ? parentStep.stepId : undefined,
       title: data.title,
@@ -346,7 +348,9 @@ export class TestInfoImpl implements TestInfo {
       this.status = 'interrupted';
   }
 
-  _failWithError(error: Error, isHardError: boolean) {
+  _failWithError(error: Error, isHardError: boolean, retriable: boolean) {
+    if (!retriable)
+      this._hasNonRetriableError = true;
     // Do not overwrite any previous hard errors.
     // Some (but not all) scenarios include:
     //   - expect() that fails after uncaught exception.
@@ -365,33 +369,70 @@ export class TestInfoImpl implements TestInfo {
     this._tracing.appendForError(serialized);
   }
 
-  async _runAsStepWithRunnable<T>(
-    stepInfo: Omit<TestStepInternal, 'complete' | 'wallTime' | 'parentStepId' | 'stepId' | 'steps'> & {
-      wallTime?: number,
-      runnableType: RunnableType;
-      runnableSlot?: TimeSlot;
-    }, cb: (step: TestStepInternal) => Promise<T>): Promise<T> {
-    return await this._timeoutManager.withRunnable({
-      type: stepInfo.runnableType,
-      slot: stepInfo.runnableSlot,
-      location: stepInfo.location,
-    }, async () => {
-      return await this._runAsStep(stepInfo, cb);
-    });
-  }
+  async _runAsStage(stage: TestStage, cb: () => Promise<any>) {
+    // Inherit some properties from parent.
+    const parent = this._stages[this._stages.length - 1];
+    stage.allowSkip = stage.allowSkip ?? parent?.allowSkip ?? false;
 
-  async _runAsStep<T>(stepInfo: Omit<TestStepInternal, 'complete' | 'wallTime' | 'parentStepId' | 'stepId' | 'steps'> & { wallTime?: number }, cb: (step: TestStepInternal) => Promise<T>): Promise<T> {
-    const step = this._addStep({ wallTime: Date.now(), ...stepInfo });
-    return await zones.run('stepZone', step, async () => {
-      try {
-        const result = await cb(step);
-        step.complete({});
-        return result;
-      } catch (e) {
-        step.complete({ error: e instanceof SkipError ? undefined : e });
-        throw e;
+    if (debugTest.enabled) {
+      const location = stage.location ? ` at "${formatLocation(stage.location)}"` : ``;
+      debugTest(`started stage "${stage.title}"${location}`);
+    }
+    stage.step = stage.stepCategory ? this._addStep({ title: stage.title, category: stage.stepCategory, location: stage.location, wallTime: Date.now(), isStage: true }) : undefined;
+    this._stages.push(stage);
+
+    let runnable: RunnableDescription | undefined;
+    if (stage.canTimeout) {
+      // Choose the deepest runnable configuration.
+      runnable = { type: 'test' };
+      for (const s of this._stages) {
+        if (s.runnableType) {
+          runnable.type = s.runnableType;
+          runnable.location = s.location;
+        }
+        if (s.runnableSlot)
+          runnable.slot = s.runnableSlot;
       }
-    });
+    }
+
+    try {
+      await this._timeoutManager.withRunnable(runnable, async () => {
+        // Note: separate try/catch is here to report errors after timeout.
+        // This way we get a nice "locator.click" error after the test times out and closes the page.
+        try {
+          await cb();
+        } catch (e) {
+          if (stage.allowSkip && (e instanceof SkipError)) {
+            if (this.status === 'passed')
+              this.status = 'skipped';
+          } else if (!(e instanceof TimeoutManagerError)) {
+            // Do not consider timeout errors in child stages as a regular "hard error".
+            this._failWithError(e, true /* isHardError */, true /* retriable */);
+          }
+          throw e;
+        }
+      });
+      stage.step?.complete({});
+    } catch (error) {
+      // When interrupting, we arrive here with a TimeoutManagerError, but we should not
+      // consider it a timeout.
+      if (!this._wasInterrupted && !this._didTimeout && (error instanceof TimeoutManagerError)) {
+        this._didTimeout = true;
+        const serialized = serializeError(error);
+        this.errors.push(serialized);
+        this._tracing.appendForError(serialized);
+        // Do not overwrite existing failure upon hook/teardown timeout.
+        if (this.status === 'passed' || this.status === 'skipped')
+          this.status = 'timedOut';
+      }
+      stage.step?.complete({ error });
+      throw error;
+    } finally {
+      if (this._stages[this._stages.length - 1] !== stage)
+        throw new Error(`Internal error: inconsistent stages!`);
+      this._stages.pop();
+      debugTest(`finished stage "${stage.title}"`);
+    }
   }
 
   _isFailure() {
@@ -409,11 +450,10 @@ export class TestInfoImpl implements TestInfo {
       title: `attach "${name}"`,
       category: 'attach',
       wallTime: Date.now(),
-      laxParent: true,
     });
     this._attachmentsPush(attachment);
     this._onAttach({
-      testId: this._test.id,
+      testId: this.testId,
       name: attachment.name,
       contentType: attachment.contentType,
       path: attachment.path,
@@ -444,7 +484,7 @@ export class TestInfoImpl implements TestInfo {
   snapshotPath(...pathSegments: string[]) {
     const subPath = path.join(...pathSegments);
     const parsedSubPath = path.parse(subPath);
-    const relativeTestFilePath = path.relative(this.project.testDir, this._test._requireFile);
+    const relativeTestFilePath = path.relative(this.project.testDir, this._requireFile);
     const parsedRelativeTestFilePath = path.parse(relativeTestFilePath);
     const projectNamePathSegment = sanitizeForFilePath(this.project.name);
 
@@ -485,7 +525,7 @@ export class TestInfoImpl implements TestInfo {
   }
 }
 
-class SkipError extends Error {
+export class SkipError extends Error {
 }
 
 const stepSymbol = Symbol('step');

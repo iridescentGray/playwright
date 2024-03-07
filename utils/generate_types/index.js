@@ -98,7 +98,12 @@ class TypesGenerator {
     }, (className, methodName, overloadIndex) => {
       if (className === 'SuiteFunction' && methodName === '__call') {
         const cls = this.documentation.classes.get('Test');
-        const method = cls.membersArray.find(m => m.alias === 'describe' && m.overloadIndex === overloadIndex);
+        const method = cls.membersArray.find(m => m.alias === 'describe');
+        return this.memberJSDOC(method, '  ').trimLeft();
+      }
+      if (className === 'TestFunction' && methodName === '__call') {
+        const cls = this.documentation.classes.get('Test');
+        const method = cls.membersArray.find(m => m.alias === '(call)');
         return this.memberJSDOC(method, '  ').trimLeft();
       }
 

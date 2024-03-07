@@ -17,7 +17,7 @@
 import { openTraceViewerApp, openTraceInBrowser, registry } from 'playwright-core/lib/server';
 import { isUnderTest, ManualPromise } from 'playwright-core/lib/utils';
 import type { FullResult } from '../../types/testReporter';
-import { clearCompilationCache, collectAffectedTestFiles, dependenciesForTestFile } from '../transform/compilationCache';
+import { collectAffectedTestFiles, dependenciesForTestFile } from '../transform/compilationCache';
 import type { FullConfigInternal } from '../common/config';
 import { InternalReporter } from '../reporters/internalReporter';
 import { TeleReporterEmitter } from '../reporters/teleEmitter';
@@ -167,12 +167,11 @@ class UIMode {
   }
 
   private async _listTests() {
-    const reporter = new InternalReporter(new TeleReporterEmitter(e => this._dispatchEvent(e.method, e.params), true));
+    const reporter = new InternalReporter(new TeleReporterEmitter(e => this._dispatchEvent('listReport', e), { omitBuffers: true }));
     this._config.cliListOnly = true;
     this._config.testIdMatcher = undefined;
     const taskRunner = createTaskRunnerForList(this._config, reporter, 'out-of-process', { failOnLoadErrors: false });
     const testRun = new TestRun(this._config, reporter);
-    clearCompilationCache();
     reporter.onConfigure(this._config.config);
     const status = await taskRunner.run(testRun, 0);
     await reporter.onEnd({ status });
@@ -196,11 +195,10 @@ class UIMode {
     this._config.testIdMatcher = id => !testIdSet || testIdSet.has(id);
 
     const reporters = await createReporters(this._config, 'ui');
-    reporters.push(new TeleReporterEmitter(e => this._dispatchEvent(e.method, e.params), true));
+    reporters.push(new TeleReporterEmitter(e => this._dispatchEvent('testReport', e), { omitBuffers: true }));
     const reporter = new InternalReporter(new Multiplexer(reporters));
     const taskRunner = createTaskRunnerForWatch(this._config, reporter);
     const testRun = new TestRun(this._config, reporter);
-    clearCompilationCache();
     reporter.onConfigure(this._config.config);
     const stop = new ManualPromise();
     const run = taskRunner.run(testRun, 0, stop).then(async status => {

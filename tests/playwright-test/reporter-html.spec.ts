@@ -442,8 +442,11 @@ for (const useIntermediateMergeReport of [false, true] as const) {
         `,
         'a.test.js': `
           import { test, expect } from '@playwright/test';
+          async function evaluateWrapper(page, expression) {
+            await page.evaluate(expression);
+          }
           test('passes', async ({ page }) => {
-            await page.evaluate('2 + 2');
+            await evaluateWrapper(page, '2 + 2');
           });
         `,
       }, { reporter: 'dot,html' }, { PW_TEST_HTML_REPORT_OPEN: 'never' });
@@ -466,6 +469,36 @@ for (const useIntermediateMergeReport of [false, true] as const) {
         /a.test.js:[\d]+/,
       ]);
       await expect(page.getByTestId('stack-trace-list').locator('.list-view-entry.selected')).toContainText('a.test.js');
+    });
+
+    test('should not show stack trace', async ({ runInlineTest, page, showReport }) => {
+      const result = await runInlineTest({
+        'playwright.config.js': `
+          module.exports = { use: { trace: 'on' } };
+        `,
+        'a.test.js': `
+          import { test, expect } from '@playwright/test';
+          test('passes', async ({ page }) => {
+            await page.evaluate('2 + 2');
+          });
+        `,
+      }, { reporter: 'dot,html' }, { PW_TEST_HTML_REPORT_OPEN: 'never' });
+      expect(result.exitCode).toBe(0);
+      expect(result.passed).toBe(1);
+
+      await showReport();
+      await page.click('text=passes');
+      await page.click('img');
+      await page.click('.action-title >> text=page.evaluate');
+      await page.click('text=Source');
+
+      await expect(page.locator('.CodeMirror-line')).toContainText([
+        /import.*test/,
+        /page\.evaluate/
+      ]);
+      await expect(page.locator('.source-line-running')).toContainText('page.evaluate');
+
+      await expect(page.getByTestId('stack-trace-list')).toHaveCount(0);
     });
 
     test('should show trace title', async ({ runInlineTest, page, showReport }) => {
@@ -883,7 +916,8 @@ for (const useIntermediateMergeReport of [false, true] as const) {
           'playwright.config.ts': `
             import { gitCommitInfo } from 'playwright/lib/plugins';
             import { test, expect } from '@playwright/test';
-            export default { _plugins: [gitCommitInfo()] };
+            const plugins = [gitCommitInfo()];
+            export default { '@playwright/test': { plugins } };
           `,
           'example.spec.ts': `
             import { test, expect } from '@playwright/test';
@@ -945,7 +979,7 @@ for (const useIntermediateMergeReport of [false, true] as const) {
                 'revision.email': 'shakespeare@example.local',
               },
             });
-            export default { _plugins: [plugin] };
+            export default { '@playwright/test': { plugins: [plugin] } };
           `,
           'example.spec.ts': `
             import { gitCommitInfo } from 'playwright/lib/plugins';
@@ -1126,7 +1160,7 @@ for (const useIntermediateMergeReport of [false, true] as const) {
           `,
           'c.test.js': `
             const { expect, test } = require('@playwright/test');
-            test('@regression @failed failed', async ({}) => {
+            test('@regression @failed failed', { tag: '@foo' }, async ({}) => {
               expect(1).toBe(2);
             });
             test('@regression @flaky flaky', async ({}, testInfo) => {
@@ -1135,7 +1169,7 @@ for (const useIntermediateMergeReport of [false, true] as const) {
               else
                 expect(1).toBe(2);
             });
-            test.skip('@regression skipped', async ({}) => {
+            test.skip('@regression skipped', { tag: ['@foo', '@bar'] }, async ({}) => {
               expect(1).toBe(2);
             });
           `,
@@ -1147,58 +1181,66 @@ for (const useIntermediateMergeReport of [false, true] as const) {
 
         await showReport();
 
-        await expect(page.locator('.test-file-test .label')).toHaveCount(42);
         await expect(page.locator('.test-file-test', { has: page.getByText('@regression @failed failed', { exact: true }) }).locator('.label')).toHaveText([
           'chromium',
-          'failed',
           'regression',
+          'failed',
+          'foo',
           'firefox',
-          'failed',
           'regression',
-          'webkit',
           'failed',
-          'regression'
+          'foo',
+          'webkit',
+          'regression',
+          'failed',
+          'foo',
         ]);
         await expect(page.locator('.test-file-test', { has: page.getByText('@regression @flaky flaky', { exact: true }) }).locator('.label')).toHaveText([
           'chromium',
-          'flaky',
           'regression',
+          'flaky',
           'firefox',
-          'flaky',
           'regression',
+          'flaky',
           'webkit',
-          'flaky',
           'regression',
+          'flaky',
         ]);
         await expect(page.locator('.test-file-test', { has: page.getByText('@regression skipped', { exact: true }) }).locator('.label')).toHaveText([
           'chromium',
           'regression',
+          'foo',
+          'bar',
           'firefox',
           'regression',
+          'foo',
+          'bar',
           'webkit',
           'regression',
+          'foo',
+          'bar',
         ]);
         await expect(page.locator('.test-file-test', { has: page.getByText('@smoke @passed passed', { exact: true }) }).locator('.label')).toHaveText([
           'chromium',
-          'passed',
           'smoke',
+          'passed',
           'firefox',
-          'passed',
           'smoke',
-          'webkit',
           'passed',
-          'smoke'
+          'webkit',
+          'smoke',
+          'passed',
         ]);
         await expect(page.locator('.test-file-test', { has: page.getByText('@smoke @failed failed', { exact: true }) }).locator('.label')).toHaveText([
           'chromium',
-          'failed',
           'smoke',
+          'failed',
           'firefox',
-          'failed',
           'smoke',
+          'failed',
           'webkit',
-          'failed',
           'smoke',
+          'failed',
         ]);
       });
 
@@ -1952,7 +1994,7 @@ for (const useIntermediateMergeReport of [false, true] as const) {
         await expect(page).toHaveURL(/testId/);
         await expect(page.locator('.test-case-path')).toHaveText('Root describe › @Notifications');
         await expect(page.locator('.test-case-title')).toHaveText('Test failed -- @call @call-details @e2e @regression #VQ458');
-        await expect(page.locator('.label')).toHaveText(['chromium', 'call', 'call-details', 'e2e', 'Notifications', 'regression']);
+        await expect(page.locator('.label')).toHaveText(['chromium', 'Notifications', 'call', 'call-details', 'e2e', 'regression']);
 
         await page.goBack();
         await expect(page).not.toHaveURL(/testId/);
@@ -1964,7 +2006,7 @@ for (const useIntermediateMergeReport of [false, true] as const) {
         await expect(page).toHaveURL(/testId/);
         await expect(page.locator('.test-case-path')).toHaveText('Root describe › @Monitoring');
         await expect(page.locator('.test-case-title')).toHaveText('Test passed -- @call @call-details @e2e @regression #VQ457');
-        await expect(page.locator('.label')).toHaveText(['firefox', 'call', 'call-details', 'e2e', 'Monitoring', 'regression']);
+        await expect(page.locator('.label')).toHaveText(['firefox', 'Monitoring', 'call', 'call-details', 'e2e', 'regression']);
       });
     });
 
@@ -2010,9 +2052,9 @@ for (const useIntermediateMergeReport of [false, true] as const) {
 
       // Failing test first, then sorted by the run order.
       await expect(page.locator('.test-file-test')).toHaveText([
-        /main › fails\d+m?smain.spec.ts:9/,
-        /main › first › passes\d+m?sfirst.ts:12/,
-        /main › second › passes\d+m?ssecond.ts:5/,
+        /main › fails\d+m?s?main.spec.ts:9/,
+        /main › first › passes\d+m?s?first.ts:12/,
+        /main › second › passes\d+m?s?second.ts:5/,
       ]);
     });
 

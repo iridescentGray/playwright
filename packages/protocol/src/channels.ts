@@ -1427,6 +1427,7 @@ export interface BrowserContextChannel extends BrowserContextEventTarget, EventT
   addCookies(params: BrowserContextAddCookiesParams, metadata?: CallMetadata): Promise<BrowserContextAddCookiesResult>;
   addInitScript(params: BrowserContextAddInitScriptParams, metadata?: CallMetadata): Promise<BrowserContextAddInitScriptResult>;
   clearCookies(params?: BrowserContextClearCookiesParams, metadata?: CallMetadata): Promise<BrowserContextClearCookiesResult>;
+  removeCookies(params: BrowserContextRemoveCookiesParams, metadata?: CallMetadata): Promise<BrowserContextRemoveCookiesResult>;
   clearPermissions(params?: BrowserContextClearPermissionsParams, metadata?: CallMetadata): Promise<BrowserContextClearPermissionsResult>;
   close(params: BrowserContextCloseParams, metadata?: CallMetadata): Promise<BrowserContextCloseResult>;
   cookies(params: BrowserContextCookiesParams, metadata?: CallMetadata): Promise<BrowserContextCookiesResult>;
@@ -1453,7 +1454,6 @@ export type BrowserContextBindingCallEvent = {
   binding: BindingCallChannel,
 };
 export type BrowserContextConsoleEvent = {
-  page: PageChannel,
   type: string,
   text: string,
   args: JSHandleChannel[],
@@ -1462,6 +1462,7 @@ export type BrowserContextConsoleEvent = {
     lineNumber: number,
     columnNumber: number,
   },
+  page: PageChannel,
 };
 export type BrowserContextCloseEvent = {};
 export type BrowserContextDialogEvent = {
@@ -1523,6 +1524,17 @@ export type BrowserContextAddInitScriptResult = void;
 export type BrowserContextClearCookiesParams = {};
 export type BrowserContextClearCookiesOptions = {};
 export type BrowserContextClearCookiesResult = void;
+export type BrowserContextRemoveCookiesParams = {
+  filter: {
+    name?: string,
+    domain?: string,
+    path?: string,
+  },
+};
+export type BrowserContextRemoveCookiesOptions = {
+
+};
+export type BrowserContextRemoveCookiesResult = void;
 export type BrowserContextClearPermissionsParams = {};
 export type BrowserContextClearPermissionsOptions = {};
 export type BrowserContextClearPermissionsResult = void;
@@ -1939,26 +1951,22 @@ export type PageExpectScreenshotParams = {
     frame: FrameChannel,
     selector: string,
   },
-  comparatorOptions?: {
-    comparator?: string,
-    maxDiffPixels?: number,
-    maxDiffPixelRatio?: number,
-    threshold?: number,
-  },
-  screenshotOptions?: {
-    fullPage?: boolean,
-    clip?: Rect,
-    omitBackground?: boolean,
-    caret?: 'hide' | 'initial',
-    animations?: 'disabled' | 'allow',
-    scale?: 'css' | 'device',
-    mask?: {
-      frame: FrameChannel,
-      selector: string,
-    }[],
-    maskColor?: string,
-    style?: string,
-  },
+  comparator?: string,
+  maxDiffPixels?: number,
+  maxDiffPixelRatio?: number,
+  threshold?: number,
+  fullPage?: boolean,
+  clip?: Rect,
+  omitBackground?: boolean,
+  caret?: 'hide' | 'initial',
+  animations?: 'disabled' | 'allow',
+  scale?: 'css' | 'device',
+  mask?: {
+    frame: FrameChannel,
+    selector: string,
+  }[],
+  maskColor?: string,
+  style?: string,
 };
 export type PageExpectScreenshotOptions = {
   expected?: Binary,
@@ -1967,26 +1975,22 @@ export type PageExpectScreenshotOptions = {
     frame: FrameChannel,
     selector: string,
   },
-  comparatorOptions?: {
-    comparator?: string,
-    maxDiffPixels?: number,
-    maxDiffPixelRatio?: number,
-    threshold?: number,
-  },
-  screenshotOptions?: {
-    fullPage?: boolean,
-    clip?: Rect,
-    omitBackground?: boolean,
-    caret?: 'hide' | 'initial',
-    animations?: 'disabled' | 'allow',
-    scale?: 'css' | 'device',
-    mask?: {
-      frame: FrameChannel,
-      selector: string,
-    }[],
-    maskColor?: string,
-    style?: string,
-  },
+  comparator?: string,
+  maxDiffPixels?: number,
+  maxDiffPixelRatio?: number,
+  threshold?: number,
+  fullPage?: boolean,
+  clip?: Rect,
+  omitBackground?: boolean,
+  caret?: 'hide' | 'initial',
+  animations?: 'disabled' | 'allow',
+  scale?: 'css' | 'device',
+  mask?: {
+    frame: FrameChannel,
+    selector: string,
+  }[],
+  maskColor?: string,
+  style?: string,
 };
 export type PageExpectScreenshotResult = {
   diff?: Binary,
@@ -2182,6 +2186,8 @@ export type PagePdfParams = {
     left?: string,
     right?: string,
   },
+  tagged?: boolean,
+  outline?: boolean,
 };
 export type PagePdfOptions = {
   scale?: number,
@@ -2201,6 +2207,8 @@ export type PagePdfOptions = {
     left?: string,
     right?: string,
   },
+  tagged?: boolean,
+  outline?: boolean,
 };
 export type PagePdfResult = {
   pdf: Binary,
@@ -4082,15 +4090,27 @@ export type ElectronApplicationInitializer = {
 };
 export interface ElectronApplicationEventTarget {
   on(event: 'close', callback: (params: ElectronApplicationCloseEvent) => void): this;
+  on(event: 'console', callback: (params: ElectronApplicationConsoleEvent) => void): this;
 }
 export interface ElectronApplicationChannel extends ElectronApplicationEventTarget, EventTargetChannel {
   _type_ElectronApplication: boolean;
   browserWindow(params: ElectronApplicationBrowserWindowParams, metadata?: CallMetadata): Promise<ElectronApplicationBrowserWindowResult>;
   evaluateExpression(params: ElectronApplicationEvaluateExpressionParams, metadata?: CallMetadata): Promise<ElectronApplicationEvaluateExpressionResult>;
   evaluateExpressionHandle(params: ElectronApplicationEvaluateExpressionHandleParams, metadata?: CallMetadata): Promise<ElectronApplicationEvaluateExpressionHandleResult>;
+  updateSubscription(params: ElectronApplicationUpdateSubscriptionParams, metadata?: CallMetadata): Promise<ElectronApplicationUpdateSubscriptionResult>;
   close(params?: ElectronApplicationCloseParams, metadata?: CallMetadata): Promise<ElectronApplicationCloseResult>;
 }
 export type ElectronApplicationCloseEvent = {};
+export type ElectronApplicationConsoleEvent = {
+  type: string,
+  text: string,
+  args: JSHandleChannel[],
+  location: {
+    url: string,
+    lineNumber: number,
+    columnNumber: number,
+  },
+};
 export type ElectronApplicationBrowserWindowParams = {
   page: PageChannel,
 };
@@ -4122,12 +4142,21 @@ export type ElectronApplicationEvaluateExpressionHandleOptions = {
 export type ElectronApplicationEvaluateExpressionHandleResult = {
   handle: JSHandleChannel,
 };
+export type ElectronApplicationUpdateSubscriptionParams = {
+  event: 'console',
+  enabled: boolean,
+};
+export type ElectronApplicationUpdateSubscriptionOptions = {
+
+};
+export type ElectronApplicationUpdateSubscriptionResult = void;
 export type ElectronApplicationCloseParams = {};
 export type ElectronApplicationCloseOptions = {};
 export type ElectronApplicationCloseResult = void;
 
 export interface ElectronApplicationEvents {
   'close': ElectronApplicationCloseEvent;
+  'console': ElectronApplicationConsoleEvent;
 }
 
 // ----------- Android -----------

@@ -16,4 +16,5 @@
  */
 
 const { program } = require('@playwright/experimental-ct-core/lib/program');
+
 program.parse(process.argv);

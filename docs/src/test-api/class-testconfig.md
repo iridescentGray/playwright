@@ -474,6 +474,7 @@ export default defineConfig({
 });
 ```
 
+
 ## property: TestConfig.testDir
 * since: v1.10
 - type: ?<[string]>

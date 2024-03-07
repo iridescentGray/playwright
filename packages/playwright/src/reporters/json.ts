@@ -169,7 +169,7 @@ class JSONReporter extends EmptyReporter {
     return {
       title: test.title,
       ok: test.ok(),
-      tags: (test.title.match(/@[\S]+/g) || []).map(t => t.substring(1)),
+      tags: test.tags.map(tag => tag.substring(1)),  // Strip '@'.
       tests: [this._serializeTest(projectId, projectName, test)],
       id: test.id,
       ...this._relativeLocation(test.location),

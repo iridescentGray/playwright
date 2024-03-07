@@ -189,7 +189,7 @@ test.describe('test modifier annotations', () => {
     expect(result.passed).toBe(0);
     expect(result.skipped).toBe(6);
     expectTest('no marker', 'skipped', 'skipped', ['fixme']);
-    expectTest('skip wrap', 'skipped', 'skipped', ['skip', 'fixme']);
+    expectTest('skip wrap', 'skipped', 'skipped', ['fixme', 'skip']);
     expectTest('skip inner', 'skipped', 'skipped', ['fixme']);
     expectTest('fixme wrap', 'skipped', 'skipped', ['fixme', 'fixme']);
     expectTest('fixme inner', 'skipped', 'skipped', ['fixme']);
@@ -220,7 +220,7 @@ test.describe('test modifier annotations', () => {
     expectTest('no marker', 'skipped', 'skipped', ['skip']);
     expectTest('skip wrap', 'skipped', 'skipped', ['skip', 'skip']);
     expectTest('skip inner', 'skipped', 'skipped', ['skip']);
-    expectTest('fixme wrap', 'skipped', 'skipped', ['fixme', 'skip']);
+    expectTest('fixme wrap', 'skipped', 'skipped', ['skip', 'fixme']);
     expectTest('fixme inner', 'skipped', 'skipped', ['skip']);
     expectTest('example', 'passed', 'expected', []);
   });
@@ -251,7 +251,7 @@ test.describe('test modifier annotations', () => {
     expect(result.exitCode).toBe(0);
     expect(result.passed).toBe(0);
     expect(result.skipped).toBe(2);
-    expectTest('fixme wrap', 'skipped', 'skipped', ['fixme', 'fixme', 'skip', 'skip', 'fixme']);
+    expectTest('fixme wrap', 'skipped', 'skipped', ['fixme', 'skip', 'skip', 'fixme', 'fixme']);
     expectTest('fixme inner', 'skipped', 'skipped', ['fixme', 'skip', 'skip', 'fixme']);
   });
 
@@ -521,7 +521,7 @@ test('modifier timeout should be reported', async ({ runInlineTest }) => {
   expect(result.output).toContain('3 |       test.skip(async () => new Promise(() => {}));');
 });
 
-test('should not run hooks if modifier throws', async ({ runInlineTest }) => {
+test('should run beforeAll/afterAll hooks if modifier throws', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'a.test.ts': `
       import { test, expect } from '@playwright/test';
@@ -530,7 +530,7 @@ test('should not run hooks if modifier throws', async ({ runInlineTest }) => {
         throw new Error('Oh my');
       });
       test.beforeAll(() => {
-        console.log('%%beforeEach');
+        console.log('%%beforeAll');
       });
       test.beforeEach(() => {
         console.log('%%beforeEach');
@@ -539,7 +539,7 @@ test('should not run hooks if modifier throws', async ({ runInlineTest }) => {
         console.log('%%afterEach');
       });
       test.afterAll(() => {
-        console.log('%%beforeEach');
+        console.log('%%afterAll');
       });
       test('skipped1', () => {
         console.log('%%skipped1');
@@ -550,7 +550,46 @@ test('should not run hooks if modifier throws', async ({ runInlineTest }) => {
   expect(result.failed).toBe(1);
   expect(result.outputLines).toEqual([
     'modifier',
+    'beforeAll',
+    'afterAll',
   ]);
+});
+
+test('should skip all tests from beforeAll', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test.beforeAll(() => {
+        console.log('%%beforeAll');
+        test.skip(true, 'reason');
+      });
+      test.beforeAll(() => {
+        console.log('%%beforeAll2');
+      });
+      test.beforeEach(() => {
+        console.log('%%beforeEach');
+      });
+      test.afterEach(() => {
+        console.log('%%afterEach');
+      });
+      test.afterAll(() => {
+        console.log('%%afterAll');
+      });
+      test('skipped1', () => {
+        console.log('%%skipped1');
+      });
+      test('skipped2', () => {
+        console.log('%%skipped2');
+      });
+    `,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.outputLines).toEqual([
+    'beforeAll',
+    'afterAll',
+  ]);
+  expect(result.report.suites[0].specs[0].tests[0].annotations).toEqual([{ type: 'skip', description: 'reason' }]);
+  expect(result.report.suites[0].specs[1].tests[0].annotations).toEqual([{ type: 'skip', description: 'reason' }]);
 });
 
 test('should report skipped tests in-order with correct properties', async ({ runInlineTest }) => {

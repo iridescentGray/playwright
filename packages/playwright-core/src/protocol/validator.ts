@@ -765,7 +765,6 @@ scheme.BrowserContextBindingCallEvent = tObject({
   binding: tChannel(['BindingCall']),
 });
 scheme.BrowserContextConsoleEvent = tObject({
-  page: tChannel(['Page']),
   type: tString,
   text: tString,
   args: tArray(tChannel(['ElementHandle', 'JSHandle'])),
@@ -774,6 +773,7 @@ scheme.BrowserContextConsoleEvent = tObject({
     lineNumber: tNumber,
     columnNumber: tNumber,
   }),
+  page: tChannel(['Page']),
 });
 scheme.BrowserContextCloseEvent = tOptional(tObject({}));
 scheme.BrowserContextDialogEvent = tObject({
@@ -828,6 +828,14 @@ scheme.BrowserContextAddInitScriptParams = tObject({
 scheme.BrowserContextAddInitScriptResult = tOptional(tObject({}));
 scheme.BrowserContextClearCookiesParams = tOptional(tObject({}));
 scheme.BrowserContextClearCookiesResult = tOptional(tObject({}));
+scheme.BrowserContextRemoveCookiesParams = tObject({
+  filter: tObject({
+    name: tOptional(tString),
+    domain: tOptional(tString),
+    path: tOptional(tString),
+  }),
+});
+scheme.BrowserContextRemoveCookiesResult = tOptional(tObject({}));
 scheme.BrowserContextClearPermissionsParams = tOptional(tObject({}));
 scheme.BrowserContextClearPermissionsResult = tOptional(tObject({}));
 scheme.BrowserContextCloseParams = tObject({
@@ -1059,26 +1067,22 @@ scheme.PageExpectScreenshotParams = tObject({
     frame: tChannel(['Frame']),
     selector: tString,
   })),
-  comparatorOptions: tOptional(tObject({
-    comparator: tOptional(tString),
-    maxDiffPixels: tOptional(tNumber),
-    maxDiffPixelRatio: tOptional(tNumber),
-    threshold: tOptional(tNumber),
-  })),
-  screenshotOptions: tOptional(tObject({
-    fullPage: tOptional(tBoolean),
-    clip: tOptional(tType('Rect')),
-    omitBackground: tOptional(tBoolean),
-    caret: tOptional(tEnum(['hide', 'initial'])),
-    animations: tOptional(tEnum(['disabled', 'allow'])),
-    scale: tOptional(tEnum(['css', 'device'])),
-    mask: tOptional(tArray(tObject({
-      frame: tChannel(['Frame']),
-      selector: tString,
-    }))),
-    maskColor: tOptional(tString),
-    style: tOptional(tString),
-  })),
+  comparator: tOptional(tString),
+  maxDiffPixels: tOptional(tNumber),
+  maxDiffPixelRatio: tOptional(tNumber),
+  threshold: tOptional(tNumber),
+  fullPage: tOptional(tBoolean),
+  clip: tOptional(tType('Rect')),
+  omitBackground: tOptional(tBoolean),
+  caret: tOptional(tEnum(['hide', 'initial'])),
+  animations: tOptional(tEnum(['disabled', 'allow'])),
+  scale: tOptional(tEnum(['css', 'device'])),
+  mask: tOptional(tArray(tObject({
+    frame: tChannel(['Frame']),
+    selector: tString,
+  }))),
+  maskColor: tOptional(tString),
+  style: tOptional(tString),
 });
 scheme.PageExpectScreenshotResult = tObject({
   diff: tOptional(tBinary),
@@ -1207,6 +1211,8 @@ scheme.PagePdfParams = tObject({
     left: tOptional(tString),
     right: tOptional(tString),
   })),
+  tagged: tOptional(tBoolean),
+  outline: tOptional(tBoolean),
 });
 scheme.PagePdfResult = tObject({
   pdf: tBinary,
@@ -2258,6 +2264,16 @@ scheme.ElectronApplicationInitializer = tObject({
   context: tChannel(['BrowserContext']),
 });
 scheme.ElectronApplicationCloseEvent = tOptional(tObject({}));
+scheme.ElectronApplicationConsoleEvent = tObject({
+  type: tString,
+  text: tString,
+  args: tArray(tChannel(['ElementHandle', 'JSHandle'])),
+  location: tObject({
+    url: tString,
+    lineNumber: tNumber,
+    columnNumber: tNumber,
+  }),
+});
 scheme.ElectronApplicationBrowserWindowParams = tObject({
   page: tChannel(['Page']),
 });
@@ -2280,6 +2296,11 @@ scheme.ElectronApplicationEvaluateExpressionHandleParams = tObject({
 scheme.ElectronApplicationEvaluateExpressionHandleResult = tObject({
   handle: tChannel(['ElementHandle', 'JSHandle']),
 });
+scheme.ElectronApplicationUpdateSubscriptionParams = tObject({
+  event: tEnum(['console']),
+  enabled: tBoolean,
+});
+scheme.ElectronApplicationUpdateSubscriptionResult = tOptional(tObject({}));
 scheme.ElectronApplicationCloseParams = tOptional(tObject({}));
 scheme.ElectronApplicationCloseResult = tOptional(tObject({}));
 scheme.AndroidInitializer = tOptional(tObject({}));

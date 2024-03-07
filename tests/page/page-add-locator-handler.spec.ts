@@ -22,7 +22,7 @@ test('should work', async ({ page, server }) => {
 
   let beforeCount = 0;
   let afterCount = 0;
-  await page.handleLocator(page.getByText('This interstitial covers the button'), async () => {
+  await page.addLocatorHandler(page.getByText('This interstitial covers the button'), async () => {
     ++beforeCount;
     await page.locator('#close').click();
     ++afterCount;
@@ -61,7 +61,7 @@ test('should work', async ({ page, server }) => {
 test('should work with a custom check', async ({ page, server }) => {
   await page.goto(server.PREFIX + '/input/handle-locator.html');
 
-  await page.handleLocator(page.locator('body'), async () => {
+  await page.addLocatorHandler(page.locator('body'), async () => {
     if (await page.getByText('This interstitial covers the button').isVisible())
       await page.locator('#close').click();
   });
@@ -85,10 +85,43 @@ test('should work with a custom check', async ({ page, server }) => {
   }
 });
 
-test('should throw when page closes', async ({ page, server }) => {
+test('should work with locator.hover()', async ({ page, server }) => {
   await page.goto(server.PREFIX + '/input/handle-locator.html');
 
-  await page.handleLocator(page.getByText('This interstitial covers the button'), async () => {
+  await page.addLocatorHandler(page.getByText('This interstitial covers the button'), async () => {
+    await page.locator('#close').click();
+  });
+
+  await page.locator('#aside').hover();
+  await page.evaluate(() => {
+    (window as any).setupAnnoyingInterstitial('pointerover', 1, 'capture');
+  });
+  await page.locator('#target').hover();
+  await expect(page.locator('#interstitial')).not.toBeVisible();
+  expect(await page.$eval('#target', e => window.getComputedStyle(e).backgroundColor)).toBe('rgb(255, 255, 0)');
+});
+
+test('should not work with force:true', async ({ page, server }) => {
+  await page.goto(server.PREFIX + '/input/handle-locator.html');
+
+  await page.addLocatorHandler(page.getByText('This interstitial covers the button'), async () => {
+    await page.locator('#close').click();
+  });
+
+  await page.locator('#aside').hover();
+  await page.evaluate(() => {
+    (window as any).setupAnnoyingInterstitial('none', 1);
+  });
+  await page.locator('#target').click({ force: true, timeout: 2000 });
+  expect(await page.locator('#interstitial').isVisible()).toBe(true);
+  expect(await page.evaluate('window.clicked')).toBe(undefined);
+});
+
+test('should throw when page closes', async ({ page, server, isAndroid }) => {
+  test.fixme(isAndroid, 'GPU process crash: https://issues.chromium.org/issues/324909825');
+  await page.goto(server.PREFIX + '/input/handle-locator.html');
+
+  await page.addLocatorHandler(page.getByText('This interstitial covers the button'), async () => {
     await page.close();
   });
 
@@ -105,7 +138,7 @@ test('should throw when handler times out', async ({ page, server }) => {
   await page.goto(server.PREFIX + '/input/handle-locator.html');
 
   let called = 0;
-  await page.handleLocator(page.getByText('This interstitial covers the button'), async () => {
+  await page.addLocatorHandler(page.getByText('This interstitial covers the button'), async () => {
     ++called;
     // Deliberately timeout.
     await new Promise(() => {});
@@ -130,7 +163,7 @@ test('should work with toBeVisible', async ({ page, server }) => {
   await page.goto(server.PREFIX + '/input/handle-locator.html');
 
   let called = 0;
-  await page.handleLocator(page.getByText('This interstitial covers the button'), async () => {
+  await page.addLocatorHandler(page.getByText('This interstitial covers the button'), async () => {
     ++called;
     await page.locator('#close').click();
   });
@@ -144,7 +177,8 @@ test('should work with toBeVisible', async ({ page, server }) => {
   expect(called).toBe(1);
 });
 
-test('should work with toHaveScreenshot', async ({ page, server }) => {
+test('should work with toHaveScreenshot', async ({ page, server, isAndroid }) => {
+  test.fixme(isAndroid, 'Screenshots are cut off on Android');
   await page.setViewportSize({ width: 500, height: 500 });
   await page.goto(server.PREFIX + '/grid.html');
 
@@ -164,7 +198,7 @@ test('should work with toHaveScreenshot', async ({ page, server }) => {
     closeButton.addEventListener('click', () => overlay.remove());
   });
 
-  await page.handleLocator(page.getByRole('button', { name: 'close' }), async () => {
+  await page.addLocatorHandler(page.getByRole('button', { name: 'close' }), async () => {
     await page.getByRole('button', { name: 'close' }).click();
   });
 

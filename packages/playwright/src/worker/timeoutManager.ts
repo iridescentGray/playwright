@@ -16,7 +16,6 @@
 
 import { colors } from 'playwright-core/lib/utilsBundle';
 import { TimeoutRunner, TimeoutRunnerError } from 'playwright-core/lib/utils';
-import type { TestInfoError } from '../../types/test';
 import type { Location } from '../../types/testReporter';
 
 export type TimeSlot = {
@@ -57,14 +56,20 @@ export class TimeoutManager {
     this._timeoutRunner.interrupt();
   }
 
-  async withRunnable<R>(runnable: RunnableDescription, cb: () => Promise<R>): Promise<R> {
+  async withRunnable<T>(runnable: RunnableDescription | undefined, cb: () => Promise<T>): Promise<T> {
+    if (!runnable)
+      return await cb();
     const existingRunnable = this._runnable;
     const effectiveRunnable = { ...runnable };
     if (!effectiveRunnable.slot)
       effectiveRunnable.slot = this._runnable.slot;
     this._updateRunnables(effectiveRunnable, undefined);
     try {
-      return await cb();
+      return await this._timeoutRunner.run(cb);
+    } catch (error) {
+      if (!(error instanceof TimeoutRunnerError))
+        throw error;
+      throw this._createTimeoutError();
     } finally {
       this._updateRunnables(existingRunnable, undefined);
     }
@@ -84,16 +89,6 @@ export class TimeoutManager {
     const slot = this._currentSlot();
     slot.timeout = slot.timeout * 3;
     this._timeoutRunner.updateTimeout(slot.timeout);
-  }
-
-  async runWithTimeout(cb: () => Promise<any>): Promise<TestInfoError | undefined> {
-    try {
-      await this._timeoutRunner.run(cb);
-    } catch (error) {
-      if (!(error instanceof TimeoutRunnerError))
-        throw error;
-      return this._createTimeoutError();
-    }
   }
 
   setTimeout(timeout: number) {
@@ -127,7 +122,7 @@ export class TimeoutManager {
     this._timeoutRunner.updateTimeout(slot.timeout, slot.elapsed);
   }
 
-  private _createTimeoutError(): TestInfoError {
+  private _createTimeoutError(): Error {
     let message = '';
     const timeout = this._currentSlot().timeout;
     switch (this._runnable.type) {
@@ -174,10 +169,12 @@ export class TimeoutManager {
       message = `Fixture "${fixtureWithSlot.title}" timeout of ${timeout}ms exceeded during ${fixtureWithSlot.phase}.`;
     message = colors.red(message);
     const location = (fixtureWithSlot || this._runnable).location;
-    return {
-      message,
-      // Include location for hooks, modifiers and fixtures to distinguish between them.
-      stack: location ? message + `\n    at ${location.file}:${location.line}:${location.column}` : undefined
-    };
+    const error = new TimeoutManagerError(message);
+    error.name = '';
+    // Include location for hooks, modifiers and fixtures to distinguish between them.
+    error.stack = message + (location ? `\n    at ${location.file}:${location.line}:${location.column}` : '');
+    return error;
   }
 }
+
+export class TimeoutManagerError extends Error {}

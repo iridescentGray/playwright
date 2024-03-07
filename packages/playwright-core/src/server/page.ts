@@ -33,7 +33,7 @@ import type { Progress } from './progress';
 import { ProgressController } from './progress';
 import { LongStandingScope, assert, isError } from '../utils';
 import { ManualPromise } from '../utils/manualPromise';
-import { debugLogger } from '../common/debugLogger';
+import { debugLogger } from '../utils/debugLogger';
 import type { ImageComparatorOptions } from '../utils/comparators';
 import { getComparator } from '../utils/comparators';
 import type { CallMetadata } from './instrumentation';
@@ -44,6 +44,7 @@ import { isInvalidSelectorError } from '../utils/isomorphic/selectorParser';
 import { parseEvaluationResultValue, source } from './isomorphic/utilityScriptSerializers';
 import type { SerializedValue } from './isomorphic/utilityScriptSerializers';
 import { TargetClosedError } from './errors';
+import { asLocator } from '../utils/isomorphic/locatorGenerators';
 
 export interface PageDelegate {
   readonly rawMouse: input.RawMouse;
@@ -79,7 +80,7 @@ export interface PageDelegate {
   getOwnerFrame(handle: dom.ElementHandle): Promise<string | null>; // Returns frameId.
   getContentQuads(handle: dom.ElementHandle): Promise<types.Quad[] | null>;
   setInputFiles(handle: dom.ElementHandle<HTMLInputElement>, files: types.FilePayload[]): Promise<void>;
-  setInputFilePaths(progress: Progress, handle: dom.ElementHandle<HTMLInputElement>, files: string[]): Promise<void>;
+  setInputFilePaths(handle: dom.ElementHandle<HTMLInputElement>, files: string[]): Promise<void>;
   getBoundingBox(handle: dom.ElementHandle): Promise<types.Rect | null>;
   getFrameElement(frame: frames.Frame): Promise<dom.ElementHandle>;
   scrollRectIntoViewIfNeeded(handle: dom.ElementHandle, rect?: types.Rect): Promise<'error:notvisible' | 'error:notconnected' | 'done'>;
@@ -110,7 +111,7 @@ type EmulatedMedia = {
   forcedColors: types.ForcedColors;
 };
 
-type ExpectScreenshotOptions = {
+type ExpectScreenshotOptions = ImageComparatorOptions & ScreenshotOptions & {
   timeout?: number,
   expected?: Buffer,
   isNot?: boolean,
@@ -118,8 +119,6 @@ type ExpectScreenshotOptions = {
     frame: frames.Frame,
     selector: string,
   },
-  comparatorOptions?: ImageComparatorOptions,
-  screenshotOptions?: ScreenshotOptions,
 };
 
 export class Page extends SdkObject {
@@ -460,9 +459,11 @@ export class Page extends SdkObject {
       }
       if (handler.resolved) {
         ++this._locatorHandlerRunningCounter;
+        progress.log(`  found ${asLocator(this.attribution.playwright.options.sdkLanguage, handler.selector)}, intercepting action to run the handler`);
         await this.openScope.race(handler.resolved).finally(() => --this._locatorHandlerRunningCounter);
         // Avoid side-effects after long-running operation.
         progress.throwIfAborted();
+        progress.log(`  interception handler has finished, continuing`);
       }
     }
   }
@@ -537,11 +538,11 @@ export class Page extends SdkObject {
   async expectScreenshot(metadata: CallMetadata, options: ExpectScreenshotOptions = {}): Promise<{ actual?: Buffer, previous?: Buffer, diff?: Buffer, errorMessage?: string, log?: string[] }> {
     const locator = options.locator;
     const rafrafScreenshot = locator ? async (progress: Progress, timeout: number) => {
-      return await locator.frame.rafrafTimeoutScreenshotElementWithProgress(progress, locator.selector, timeout, options.screenshotOptions || {});
+      return await locator.frame.rafrafTimeoutScreenshotElementWithProgress(progress, locator.selector, timeout, options || {});
     } : async (progress: Progress, timeout: number) => {
       await this.performLocatorHandlersCheckpoint(progress);
       await this.mainFrame().rafrafTimeout(timeout);
-      return await this._screenshotter.screenshotPage(progress, options.screenshotOptions || {});
+      return await this._screenshotter.screenshotPage(progress, options || {});
     };
 
     const comparator = getComparator('image/png');
@@ -549,7 +550,7 @@ export class Page extends SdkObject {
     if (!options.expected && options.isNot)
       return { errorMessage: '"not" matcher requires expected result' };
     try {
-      const format = validateScreenshotOptions(options.screenshotOptions || {});
+      const format = validateScreenshotOptions(options || {});
       if (format !== 'png')
         throw new Error('Only PNG screenshots are supported');
     } catch (error) {
@@ -562,7 +563,7 @@ export class Page extends SdkObject {
       diff?: Buffer,
     } | undefined = undefined;
     const areEqualScreenshots = (actual: Buffer | undefined, expected: Buffer | undefined, previous: Buffer | undefined) => {
-      const comparatorResult = actual && expected ? comparator(actual, expected, options.comparatorOptions) : undefined;
+      const comparatorResult = actual && expected ? comparator(actual, expected, options) : undefined;
       if (comparatorResult !== undefined && !!comparatorResult === !!options.isNot)
         return true;
       if (comparatorResult)
